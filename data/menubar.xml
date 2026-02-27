@@ -15,6 +15,7 @@
         </menu>
         <menu name="$Export">
             <item name="$Export Minimap..." action="EXPORT_MINIMAP" help="Export minimap to an image file."/>
+            <item name="Export to $JSON (Tiled)..." action="EXPORT_JSON" help="Export selected area to Tiled JSON format with spritesheet."/>
         </menu>
         <menu name="$Reload">
             <item name="$Reload" hotkey="F5" action="RELOAD_DATA" help="Reloads all data files."/>

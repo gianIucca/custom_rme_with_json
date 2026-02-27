@@ -61,6 +61,7 @@ MainMenuBar::MainMenuBar(MainFrame *frame) : frame(frame)
 	MAKE_ACTION(IMPORT_MONSTERS, wxITEM_NORMAL, OnImportMonsterData);
 	MAKE_ACTION(IMPORT_MINIMAP, wxITEM_NORMAL, OnImportMinimap);
 	MAKE_ACTION(EXPORT_MINIMAP, wxITEM_NORMAL, OnExportMinimap);
+	MAKE_ACTION(EXPORT_JSON, wxITEM_NORMAL, OnExportJSON);
 
 	MAKE_ACTION(RELOAD_DATA, wxITEM_NORMAL, OnReloadDataFiles);
 	//MAKE_ACTION(RECENT_FILES, wxITEM_NORMAL, OnRecent);
@@ -329,6 +330,7 @@ void MainMenuBar::Update()
 	EnableItem(IMPORT_MONSTERS, is_local);
 	EnableItem(IMPORT_MINIMAP, false);
 	EnableItem(EXPORT_MINIMAP, is_local);
+	EnableItem(EXPORT_JSON, is_local);
 
 	EnableItem(FIND_ITEM, is_host);
 	EnableItem(REPLACE_ITEMS, is_local);
@@ -817,6 +819,16 @@ void MainMenuBar::OnExportMinimap(wxCommandEvent& WXUNUSED(event))
 	}
 
 	ExportMiniMapWindow dialog(frame, *g_gui.GetCurrentEditor());
+	dialog.ShowModal();
+}
+
+void MainMenuBar::OnExportJSON(wxCommandEvent& WXUNUSED(event))
+{
+	if(!g_gui.IsEditorOpen()) {
+		return;
+	}
+
+	ExportJSONWindow dialog(frame, *g_gui.GetCurrentEditor());
 	dialog.ShowModal();
 }
 

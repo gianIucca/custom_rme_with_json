@@ -355,6 +355,7 @@
     <ClInclude Include="..\..\source\duplicated_items_window.h">
       <Filter>gui\dialogs</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\source\iomap_json.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\source\mkpch.cpp" />
@@ -643,6 +644,7 @@
     <ClCompile Include="..\..\source\duplicated_items_window.cpp">
       <Filter>gui\dialogs</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\source\iomap_json.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="rme.rc">

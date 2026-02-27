@@ -113,11 +113,12 @@ bool Application::OnInit()
 	wxAppConsole::SetInstance(this);
 	wxArtProvider::Push(new ArtProvider());
 
-#if defined(__LINUX__) || defined(__WINDOWS__)
-	int argc = 1;
-	char* argv[1] = { wxString(this->argv[0]).char_str() };
-	glutInit(&argc, argv);
-#endif
+// Commented out to fix wxWidgets initialization conflict
+// #if defined(__LINUX__) || defined(__WINDOWS__)
+// 	int argc = 1;
+// 	char* argv[1] = { wxString(this->argv[0]).char_str() };
+// 	glutInit(&argc, argv);
+// #endif
 
 	// Load some internal stuff
 	g_settings.load();

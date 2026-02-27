@@ -139,6 +139,30 @@ protected:
 };
 
 /**
+ * The export JSON dialog for Tiled map editor format
+ */
+class ExportJSONWindow : public wxDialog
+{
+public:
+	ExportJSONWindow(wxWindow* parent, Editor& editor);
+	virtual ~ExportJSONWindow();
+
+	void OnClickBrowse(wxCommandEvent&);
+	void OnClickOK(wxCommandEvent&);
+	void OnClickCancel(wxCommandEvent&);
+
+protected:
+	Editor& editor;
+
+	wxStaticText* error_field;
+	wxTextCtrl* directory_text_field;
+	wxTextCtrl* file_name_text_field;
+	wxButton* ok_button;
+
+	DECLARE_EVENT_TABLE();
+};
+
+/**
  * Text control that will forward up/down pgup / pgdown keys to parent window
  */
 class KeyForwardingTextCtrl : public wxTextCtrl

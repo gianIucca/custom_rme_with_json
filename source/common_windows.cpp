@@ -28,6 +28,8 @@
 #include "raw_brush.h"
 
 #include "palette_window.h"
+#include "iominimap.h"
+#include "iomap_json.h"
 #include "gui.h"
 #include "application.h"
 #include "common_windows.h"
@@ -619,6 +621,123 @@ void ExportMiniMapWindow::CheckValues()
 
 	error_field->SetLabel(wxEmptyString);
 	ok_button->Enable(true);
+}
+
+// ============================================================================
+// Export JSON window
+
+BEGIN_EVENT_TABLE(ExportJSONWindow, wxDialog)
+	EVT_BUTTON(MAP_WINDOW_FILE_BUTTON, ExportJSONWindow::OnClickBrowse)
+	EVT_BUTTON(wxID_OK, ExportJSONWindow::OnClickOK)
+	EVT_BUTTON(wxID_CANCEL, ExportJSONWindow::OnClickCancel)
+END_EVENT_TABLE()
+
+ExportJSONWindow::ExportJSONWindow(wxWindow* parent, Editor& editor) :
+	wxDialog(parent, wxID_ANY, "Export to Tiled JSON", wxDefaultPosition, wxSize(400, 250)),
+	editor(editor)
+{
+	wxSizer* sizer = newd wxBoxSizer(wxVERTICAL);
+	wxSizer* tmpsizer;
+
+	// Info text
+	wxStaticText* info = newd wxStaticText(this, wxID_ANY,
+		"Export selected area to Tiled map editor format (JSON + PNG spritesheet).\n"
+		"Please select tiles on a single floor before exporting.");
+	sizer->Add(info, 0, wxALL, 10);
+
+	// Error field
+	error_field = newd wxStaticText(this, wxID_ANY, "");
+	error_field->SetForegroundColour(*wxRED);
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	tmpsizer->Add(error_field, 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	// Output folder
+	directory_text_field = newd wxTextCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize);
+	directory_text_field->SetValue(wxString(g_settings.getString(Config::MINIMAP_EXPORT_DIR)));
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "Output Folder");
+	tmpsizer->Add(directory_text_field, 1, wxALL, 5);
+	tmpsizer->Add(newd wxButton(this, MAP_WINDOW_FILE_BUTTON, "Browse"), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxALL | wxEXPAND, 5);
+
+	// File name
+	wxString mapName(editor.getMap().getName().c_str(), wxConvUTF8);
+	file_name_text_field = newd wxTextCtrl(this, wxID_ANY, mapName.BeforeLast('.'), wxDefaultPosition, wxDefaultSize);
+	tmpsizer = newd wxStaticBoxSizer(wxHORIZONTAL, this, "File Name");
+	tmpsizer->Add(file_name_text_field, 1, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxLEFT | wxRIGHT | wxBOTTOM | wxEXPAND, 5);
+
+	// Buttons
+	tmpsizer = newd wxBoxSizer(wxHORIZONTAL);
+	ok_button = newd wxButton(this, wxID_OK, "Export");
+	tmpsizer->Add(ok_button, 0, wxALL, 5);
+	tmpsizer->Add(newd wxButton(this, wxID_CANCEL, "Cancel"), 0, wxALL, 5);
+	sizer->Add(tmpsizer, 0, wxALIGN_CENTER);
+
+	SetSizerAndFit(sizer);
+	Layout();
+	Centre(wxBOTH);
+
+	// Check if selection exists
+	if (!editor.hasSelection()) {
+		error_field->SetLabel("No selection. Please select tiles to export.");
+		ok_button->Enable(false);
+	}
+}
+
+ExportJSONWindow::~ExportJSONWindow() = default;
+
+void ExportJSONWindow::OnClickBrowse(wxCommandEvent& WXUNUSED(event))
+{
+	wxDirDialog dialog(NULL, "Select the output folder", "", wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+	if(dialog.ShowModal() == wxID_OK) {
+		const wxString& directory = dialog.GetPath();
+		directory_text_field->ChangeValue(directory);
+	}
+}
+
+void ExportJSONWindow::OnClickOK(wxCommandEvent& WXUNUSED(event))
+{
+	if (!editor.hasSelection()) {
+		g_gui.PopupDialog("Error", "No selection. Please select tiles to export.", wxOK);
+		return;
+	}
+
+	std::string directory = directory_text_field->GetValue().ToStdString();
+	std::string file_name = file_name_text_field->GetValue().ToStdString();
+
+	if (directory.empty()) {
+		g_gui.PopupDialog("Error", "Please select an output folder.", wxOK);
+		return;
+	}
+
+	if (file_name.empty()) {
+		g_gui.PopupDialog("Error", "Please enter a file name.", wxOK);
+		return;
+	}
+
+	g_settings.setString(Config::MINIMAP_EXPORT_DIR, directory);
+
+	g_gui.CreateLoadBar("Exporting to JSON...");
+
+	IOMapJSON io(&editor);
+	if (!io.exportSelection(directory, file_name)) {
+		g_gui.DestroyLoadBar();
+		g_gui.PopupDialog("Error", io.getError(), wxOK);
+		return;
+	}
+
+	g_gui.DestroyLoadBar();
+	g_gui.PopupDialog("Success", "Map exported successfully to:\n" + 
+		directory + "/" + file_name + ".json\n" +
+		directory + "/" + file_name + "_spritesheet.png", wxOK);
+	
+	EndModal(wxID_OK);
+}
+
+void ExportJSONWindow::OnClickCancel(wxCommandEvent& WXUNUSED(event))
+{
+	EndModal(wxID_CANCEL);
 }
 
 // ============================================================================
