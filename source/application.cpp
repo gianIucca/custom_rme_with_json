@@ -41,8 +41,6 @@
 #include <GL/glut.h>
 #endif
 
-#include "../brushes/icon/rme_icon.xpm"
-
 BEGIN_EVENT_TABLE(MainFrame, wxFrame)
 	EVT_CLOSE(MainFrame::OnExit)
 
@@ -177,8 +175,28 @@ bool Application::OnInit()
 	// Load palette
 	g_gui.LoadPerspective();
 
-    wxIcon icon(rme_icon);
-    g_gui.root->SetIcon(icon);
+    wxIcon icon;
+    // Try multiple possible locations for the icon
+    wxString iconPaths[] = {
+        g_gui.getFoundDataDirectory() + "../brushes/icon/custom_rme_icon.ico",
+        g_gui.GetExecDirectory() + "../brushes/icon/custom_rme_icon.ico",
+        g_gui.GetExecDirectory() + "../../brushes/icon/custom_rme_icon.ico",
+        g_gui.GetExecDirectory() + "../../../brushes/icon/custom_rme_icon.ico"
+    };
+    
+    bool iconLoaded = false;
+    for(const wxString& path : iconPaths) {
+        if(wxFileName::FileExists(path)) {
+            if(icon.LoadFile(path, wxBITMAP_TYPE_ICO)) {
+                iconLoaded = true;
+                break;
+            }
+        }
+    }
+    
+    if(iconLoaded) {
+        g_gui.root->SetIcon(icon);
+    }
 
     if(g_settings.getInteger(Config::WELCOME_DIALOG) == 1 && m_file_to_open == wxEmptyString) {
         g_gui.ShowWelcomeDialog(icon);

@@ -32,7 +32,14 @@ find_package(ZLIB REQUIRED)
 
 include(${wxWidgets_USE_FILE})
 include(source/CMakeLists.txt)
-add_executable(${PROJECT_NAME} ${rme_H} ${rme_SRC})
+
+# Add Windows resource file for icon
+if(WIN32)
+    set(RME_RC_FILE ${CMAKE_CURRENT_SOURCE_DIR}/vcproj/Project/RME.rc)
+    add_executable(${PROJECT_NAME} WIN32 ${rme_H} ${rme_SRC} ${RME_RC_FILE})
+else()
+    add_executable(${PROJECT_NAME} ${rme_H} ${rme_SRC})
+endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 20)
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD_REQUIRED ON)

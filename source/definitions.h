@@ -18,7 +18,7 @@
 #ifndef RME_DEFINITIONS_H_
 #define RME_DEFINITIONS_H_
 
-#define __W_RME_APPLICATION_NAME__ wxString("Remere's Map Editor")
+#define __W_RME_APPLICATION_NAME__ wxString("My own RME with blackjack and hookers")
 
 // Version info
 // xxyyzzt (major, minor, subversion)

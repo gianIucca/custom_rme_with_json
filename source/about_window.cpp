@@ -180,7 +180,8 @@ AboutWindow::AboutWindow(wxWindow* parent) :
 	compiler = "unknown";
 #endif
 
-	about << "This is an OpenTibia Map Editor created by Remere.\n";
+	about << "This is an OpenTibia Map Editor based on Remere's work.\n";
+	about << "My own RME with blackjack and hookers!\n";
 	about << "Version " << __W_RME_VERSION__ << " for ";
 	about <<
 #ifdef __WINDOWS__
