@@ -99,7 +99,11 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 		// Get ground item
 		if (tile->ground) {
 			uint16_t clientID = tile->ground->getClientID();
-			if (spriteToTileID.find(clientID) == spriteToTileID.end()) {
+			// Fallback to item ID if clientID is 0
+			if (clientID == 0) {
+				clientID = tile->ground->getID();
+			}
+			if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
 				spriteToTileID[clientID] = nextTileID++;
 				usedSprites.push_back(clientID);
 			}
@@ -110,7 +114,11 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 			for (auto item : tile->items) {
 				if (item && !item->isBorder()) { // Skip border items
 					uint16_t clientID = item->getClientID();
-					if (spriteToTileID.find(clientID) == spriteToTileID.end()) {
+					// Fallback to item ID if clientID is 0
+					if (clientID == 0) {
+						clientID = item->getID();
+					}
+					if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
 						spriteToTileID[clientID] = nextTileID++;
 						usedSprites.push_back(clientID);
 					}
@@ -130,32 +138,45 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 		return false;
 	}
 
-	// Build tile data array (row-major order)
-	std::vector<int> tileData(width * height, 0);
+	// Build separate layers for ground and objects
+	std::vector<int> groundData(width * height, 0);
+	std::vector<int> objectData(width * height, 0);
 
 	for (auto tile : tiles) {
-		if (!tile || !tile->hasItems()) continue;
+		if (!tile) continue;
 
 		const auto& pos = tile->getPosition();
 		int x = pos.x - min_x;
 		int y = pos.y - min_y;
 		int index = y * width + x;
 
-		// Get the appropriate sprite for this tile
-		uint16_t clientID = 0;
+		// Ground layer
 		if (tile->ground) {
-			clientID = tile->ground->getClientID();
-		} else if (!tile->items.empty()) {
-			for (auto item : tile->items) {
-				if (item && !item->isBorder()) {
-					clientID = item->getClientID();
-					break;
-				}
+			uint16_t clientID = tile->ground->getClientID();
+			// Fallback to item ID if clientID is 0
+			if (clientID == 0) {
+				clientID = tile->ground->getID();
+			}
+			if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
+				groundData[index] = spriteToTileID[clientID];
 			}
 		}
 
-		if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
-			tileData[index] = spriteToTileID[clientID];
+		// Object layer (items on top of ground)
+		if (!tile->items.empty()) {
+			for (auto item : tile->items) {
+				if (item && !item->isBorder()) {
+					uint16_t clientID = item->getClientID();
+					// Fallback to item ID if clientID is 0
+					if (clientID == 0) {
+						clientID = item->getID();
+					}
+					if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
+						objectData[index] = spriteToTileID[clientID];
+						break; // Only use first non-border item for now
+					}
+				}
+			}
 		}
 	}
 
@@ -182,24 +203,39 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	// Layers array
 	json layers = json::array();
 
-	// Ground/tile layer
-	json tileLayer;
-	tileLayer["id"] = 1;
-	tileLayer["name"] = "tiles";
-	tileLayer["type"] = "tilelayer";
-	tileLayer["visible"] = true;
-	tileLayer["opacity"] = 1.0;
-	tileLayer["x"] = 0;
-	tileLayer["y"] = 0;
-	tileLayer["width"] = width;
-	tileLayer["height"] = height;
-	tileLayer["data"] = tileData;
+	// Ground layer
+	json groundLayer;
+	groundLayer["id"] = 1;
+	groundLayer["name"] = "ground";
+	groundLayer["type"] = "tilelayer";
+	groundLayer["visible"] = true;
+	groundLayer["opacity"] = 1.0;
+	groundLayer["x"] = 0;
+	groundLayer["y"] = 0;
+	groundLayer["width"] = width;
+	groundLayer["height"] = height;
+	groundLayer["data"] = groundData;
 
-	layers.push_back(tileLayer);
+	layers.push_back(groundLayer);
+
+	// Object layer (items on top)
+	json objectLayer;
+	objectLayer["id"] = 2;
+	objectLayer["name"] = "objects";
+	objectLayer["type"] = "tilelayer";
+	objectLayer["visible"] = true;
+	objectLayer["opacity"] = 1.0;
+	objectLayer["x"] = 0;
+	objectLayer["y"] = 0;
+	objectLayer["width"] = width;
+	objectLayer["height"] = height;
+	objectLayer["data"] = objectData;
+
+	layers.push_back(objectLayer);
 
 	// Collision layer
 	json collisionLayer;
-	collisionLayer["id"] = 2;
+	collisionLayer["id"] = 3;
 	collisionLayer["name"] = "collision";
 	collisionLayer["type"] = "tilelayer";
 	collisionLayer["visible"] = true;
@@ -253,7 +289,7 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	root["tilesets"] = tilesets;
 
 	// Map properties
-	root["nextlayerid"] = 3;
+	root["nextlayerid"] = 4;
 	root["nextobjectid"] = 1;
 	root["orientation"] = "orthogonal";
 	root["renderorder"] = "right-down";
