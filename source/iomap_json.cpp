@@ -109,23 +109,23 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 			}
 		}
 
-		// Get other items (we'll use the topmost non-ground item for simplicity)
-		if (!tile->items.empty()) {
-			for (auto item : tile->items) {
-				if (item && !item->isBorder()) { // Skip border items
-					uint16_t clientID = item->getClientID();
-					// Fallback to item ID if clientID is 0
-					if (clientID == 0) {
-						clientID = item->getID();
-					}
-					if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
-						spriteToTileID[clientID] = nextTileID++;
-						usedSprites.push_back(clientID);
-					}
-					break; // Only use first non-border item
+	// Get other items (collect ALL items including borders/walls)
+	if (!tile->items.empty()) {
+		for (auto item : tile->items) {
+			if (item) {
+				uint16_t clientID = item->getClientID();
+				// Fallback to item ID if clientID is 0
+				if (clientID == 0) {
+					clientID = item->getID();
 				}
+				if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
+					spriteToTileID[clientID] = nextTileID++;
+					usedSprites.push_back(clientID);
+				}
+				// Don't break - collect ALL items on this tile
 			}
 		}
+	}
 	}
 
 	if (usedSprites.empty()) {
@@ -138,10 +138,26 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 		return false;
 	}
 
-	// Build separate layers for ground and objects
-	std::vector<int> groundData(width * height, 0);
-	std::vector<int> objectData(width * height, 0);
+	// Find the maximum number of items on any tile
+	int maxItemsPerTile = 0;
+	for (auto tile : tiles) {
+		if (!tile) continue;
+		int itemCount = tile->items.size();
+		if (itemCount > maxItemsPerTile) {
+			maxItemsPerTile = itemCount;
+		}
+	}
 
+	// Create ground layer data
+	std::vector<int> groundData(width * height, 0);
+
+	// Create multiple object layers (one for each stacking position)
+	std::vector<std::vector<int>> objectLayers(maxItemsPerTile);
+	for (int i = 0; i < maxItemsPerTile; ++i) {
+		objectLayers[i].resize(width * height, 0);
+	}
+
+	// Build layer data
 	for (auto tile : tiles) {
 		if (!tile) continue;
 
@@ -162,19 +178,18 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 			}
 		}
 
-		// Object layer (items on top of ground)
-		if (!tile->items.empty()) {
-			for (auto item : tile->items) {
-				if (item && !item->isBorder()) {
-					uint16_t clientID = item->getClientID();
-					// Fallback to item ID if clientID is 0
-					if (clientID == 0) {
-						clientID = item->getID();
-					}
-					if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
-						objectData[index] = spriteToTileID[clientID];
-						break; // Only use first non-border item for now
-					}
+		// Object layers (distribute items across layers by stack position)
+		// Items are ordered bottom-to-top in the vector (index 0 = bottom)
+		for (size_t layerIdx = 0; layerIdx < tile->items.size() && layerIdx < (size_t)maxItemsPerTile; ++layerIdx) {
+			Item* item = tile->items[layerIdx];
+			if (item) {
+				uint16_t clientID = item->getClientID();
+				// Fallback to item ID if clientID is 0
+				if (clientID == 0) {
+					clientID = item->getID();
+				}
+				if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
+					objectLayers[layerIdx][index] = spriteToTileID[clientID];
 				}
 			}
 		}
@@ -202,10 +217,26 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 
 	// Layers array
 	json layers = json::array();
+	int nextLayerId = 1;
 
-	// Ground layer
+	// Collision layer FIRST (invisible - only for collision detection, won't render)
+	json collisionLayer;
+	collisionLayer["id"] = nextLayerId++;
+	collisionLayer["name"] = "collision";
+	collisionLayer["type"] = "tilelayer";
+	collisionLayer["visible"] = false; // Invisible so it doesn't interfere with rendering
+	collisionLayer["opacity"] = 1.0;
+	collisionLayer["x"] = 0;
+	collisionLayer["y"] = 0;
+	collisionLayer["width"] = width;
+	collisionLayer["height"] = height;
+	collisionLayer["data"] = collisionData;
+
+	layers.push_back(collisionLayer);
+
+	// Ground layer (bottom visible layer)
 	json groundLayer;
-	groundLayer["id"] = 1;
+	groundLayer["id"] = nextLayerId++;
 	groundLayer["name"] = "ground";
 	groundLayer["type"] = "tilelayer";
 	groundLayer["visible"] = true;
@@ -218,35 +249,26 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 
 	layers.push_back(groundLayer);
 
-	// Object layer (items on top)
-	json objectLayer;
-	objectLayer["id"] = 2;
-	objectLayer["name"] = "objects";
-	objectLayer["type"] = "tilelayer";
-	objectLayer["visible"] = true;
-	objectLayer["opacity"] = 1.0;
-	objectLayer["x"] = 0;
-	objectLayer["y"] = 0;
-	objectLayer["width"] = width;
-	objectLayer["height"] = height;
-	objectLayer["data"] = objectData;
+	// Create multiple object layers (one for each stack position) - rendered on top
+	for (int i = 0; i < maxItemsPerTile; ++i) {
+		json objectLayer;
+		objectLayer["id"] = nextLayerId++;
+		
+		// Name layers sequentially: "objects_1", "objects_2", etc.
+		std::string layerName = "objects_" + std::to_string(i + 1);
+		objectLayer["name"] = layerName;
+		
+		objectLayer["type"] = "tilelayer";
+		objectLayer["visible"] = true;
+		objectLayer["opacity"] = 1.0;
+		objectLayer["x"] = 0;
+		objectLayer["y"] = 0;
+		objectLayer["width"] = width;
+		objectLayer["height"] = height;
+		objectLayer["data"] = objectLayers[i];
 
-	layers.push_back(objectLayer);
-
-	// Collision layer
-	json collisionLayer;
-	collisionLayer["id"] = 3;
-	collisionLayer["name"] = "collision";
-	collisionLayer["type"] = "tilelayer";
-	collisionLayer["visible"] = true;
-	collisionLayer["opacity"] = 0.5;
-	collisionLayer["x"] = 0;
-	collisionLayer["y"] = 0;
-	collisionLayer["width"] = width;
-	collisionLayer["height"] = height;
-	collisionLayer["data"] = collisionData;
-
-	layers.push_back(collisionLayer);
+		layers.push_back(objectLayer);
+	}
 
 	root["layers"] = layers;
 
@@ -289,7 +311,7 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	root["tilesets"] = tilesets;
 
 	// Map properties
-	root["nextlayerid"] = 4;
+	root["nextlayerid"] = nextLayerId;
 	root["nextobjectid"] = 1;
 	root["orientation"] = "orthogonal";
 	root["renderorder"] = "right-down";
