@@ -88,11 +88,13 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	}
 
 	// Collect all unique sprites used and assign them tile IDs
+	// For multi-tile sprites (64x64, etc.), we need separate tile IDs for each piece
+	// Key: clientID, Value: base tile ID (for single-tile) or first tile ID (for multi-tile)
 	std::unordered_map<uint16_t, int> spriteToTileID;
-	std::vector<uint16_t> usedSprites;
+	std::vector<SpriteInfo> usedSprites;
 	int nextTileID = 1; // Tiled uses 1-based indexing, 0 = empty
 
-	// First pass: collect all unique client IDs
+	// First pass: collect all unique client IDs and check for multi-tile sprites
 	for (auto tile : tiles) {
 		if (!tile || !tile->hasItems()) continue;
 
@@ -104,8 +106,25 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 				clientID = tile->ground->getID();
 			}
 			if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
-				spriteToTileID[clientID] = nextTileID++;
-				usedSprites.push_back(clientID);
+				// Get sprite to check its actual dimensions
+				Sprite* sprite = g_gui.gfx.getSprite(clientID);
+				GameSprite* gameSprite = dynamic_cast<GameSprite*>(sprite);
+				
+				uint8_t w = 1;
+				uint8_t h = 1;
+				
+				if (gameSprite) {
+					w = gameSprite->width > 0 ? gameSprite->width : 1;
+					h = gameSprite->height > 0 ? gameSprite->height : 1;
+					wxLogMessage("Item sprite - clientID: %d, width: %d, height: %d", clientID, w, h);
+				} else {
+					wxLogMessage("Item sprite - clientID: %d (not a GameSprite)", clientID);
+				}
+				
+				spriteToTileID[clientID] = nextTileID;
+				usedSprites.push_back({clientID, w, h});  // Store actual dimensions!
+				// Reserve tile IDs for multi-tile sprites (they take up w*h grid cells in spritesheet)
+				nextTileID += (w * h);
 			}
 		}
 
@@ -118,10 +137,42 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 				if (clientID == 0) {
 					clientID = item->getID();
 				}
-				if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
-					spriteToTileID[clientID] = nextTileID++;
-					usedSprites.push_back(clientID);
+			if (clientID > 0 && spriteToTileID.find(clientID) == spriteToTileID.end()) {
+				// Get sprite to check its actual dimensions
+				Sprite* sprite = g_gui.gfx.getSprite(clientID);
+				GameSprite* gameSprite = dynamic_cast<GameSprite*>(sprite);
+				
+				uint8_t w = 1;
+				uint8_t h = 1;
+				
+				if (gameSprite) {
+					w = gameSprite->width > 0 ? gameSprite->width : 1;
+					h = gameSprite->height > 0 ? gameSprite->height : 1;
+					
+					// Check if spriteList[0] has actual pixel data larger than 32x32
+					int actualPixelWidth = 32;
+					int actualPixelHeight = 32;
+					if (!gameSprite->spriteList.empty() && gameSprite->spriteList[0]) {
+						uint8_t* rawData = gameSprite->spriteList[0]->getRGBAData();
+						if (rawData) {
+							// Check the actual allocated size - sprites are always 32x32 in spriteList
+							actualPixelWidth = 32;
+							actualPixelHeight = 32;
+						}
+					}
+					
+					wxLogMessage("Ground sprite - clientID: %d, width: %d, height: %d, spriteList.size: %d, numsprites: %d, pattern_x: %d, pattern_y: %d, actualPixels: %dx%d", 
+						clientID, w, h, gameSprite->spriteList.size(), gameSprite->numsprites, 
+						gameSprite->pattern_x, gameSprite->pattern_y, actualPixelWidth, actualPixelHeight);
+				} else {
+					wxLogMessage("Ground sprite - clientID: %d (not a GameSprite)", clientID);
 				}
+				
+				spriteToTileID[clientID] = nextTileID;
+				usedSprites.push_back({clientID, w, h});  // Store actual dimensions!
+				// Reserve tile IDs for multi-tile sprites (they take up w*h grid cells in spritesheet)
+				nextTileID += (w * h);
+			}
 				// Don't break - collect ALL items on this tile
 			}
 		}
@@ -133,8 +184,22 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 		return false;
 	}
 
+	// Debug: Show the spriteToTileID mapping
+	wxLogMessage("=== SPRITE TO TILEID MAPPING ===");
+	for (const auto& pair : spriteToTileID) {
+		wxLogMessage("  clientID=%d -> baseTileID=%d", pair.first, pair.second);
+	}
+	wxLogMessage("=== END MAPPING ===");
+
+	// Debug: Show the order of sprites in usedSprites vector
+	wxLogMessage("=== USED SPRITES ORDER (this is the order in spritesheet) ===");
+	for (size_t i = 0; i < usedSprites.size(); ++i) {
+		wxLogMessage("  [%d] clientID=%d, size=%dx%d", i, usedSprites[i].clientID, usedSprites[i].width, usedSprites[i].height);
+	}
+	wxLogMessage("=== END ORDER ===");
+
 	// Generate spritesheet
-	if (!generateSpritesheet(directory, name, spriteToTileID)) {
+	if (!generateSpritesheet(directory, name, usedSprites)) {
 		return false;
 	}
 
@@ -174,7 +239,51 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 				clientID = tile->ground->getID();
 			}
 			if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
-				groundData[index] = spriteToTileID[clientID];
+				int baseTileID = spriteToTileID[clientID];
+				
+				// Check if this is a multi-tile sprite
+				Sprite* sprite = g_gui.gfx.getSprite(clientID);
+				GameSprite* gameSprite = dynamic_cast<GameSprite*>(sprite);
+				uint8_t spriteWidth = 1;
+				uint8_t spriteHeight = 1;
+				
+				if (gameSprite) {
+					spriteWidth = gameSprite->width > 0 ? gameSprite->width : 1;
+					spriteHeight = gameSprite->height > 0 ? gameSprite->height : 1;
+				}
+				
+				// Place all pieces of the multi-tile sprite
+				// Tibia sprites: spriteList[0]=bottom-left, [1]=bottom-right, [2]=top-left, [3]=top-right
+				// Map layout: (x,y)=top-left, (x+1,y)=top-right, (x,y+1)=bottom-left, (x+1,y+1)=bottom-right
+				if (spriteWidth > 1 || spriteHeight > 1) {
+					wxLogMessage("Placing multi-tile ground sprite: clientID=%d at map pos (%d,%d), baseTileID=%d, size=%dx%d", 
+						clientID, x, y, baseTileID, spriteWidth, spriteHeight);
+				}
+				
+				for (uint8_t h = 0; h < spriteHeight; ++h) {
+					for (uint8_t w = 0; w < spriteWidth; ++w) {
+						// Map position: Tibia uses bottom-to-top, so h=0 is bottom, h=1 is top
+						// We want h=0 (bottom) at y+1, and h=1 (top) at y+0
+						int tileX = x + w;
+						int tileY = y + (spriteHeight - 1 - h);
+						
+						if (tileX >= 0 && tileX < width && tileY >= 0 && tileY < height) {
+							int targetIndex = tileY * width + tileX;
+							
+							// Get the piece index using the same method as spritesheet generation
+							// This ensures the tileID matches the spritesheet layout
+							int pieceIndex = gameSprite ? gameSprite->getIndex(w, h, 0, 0, 0, 0, 0) : (h * spriteWidth + w);
+							int pieceID = baseTileID + pieceIndex;
+							
+							if (spriteWidth > 1 || spriteHeight > 1) {
+								wxLogMessage("  Piece [h=%d,w=%d] pieceIndex=%d -> tileID=%d at map pos (%d,%d)", 
+									h, w, pieceIndex, pieceID, tileX, tileY);
+							}
+							
+							groundData[targetIndex] = pieceID;
+						}
+					}
+				}
 			}
 		}
 
@@ -188,8 +297,79 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 				if (clientID == 0) {
 					clientID = item->getID();
 				}
+				
+				// Debug: log ALL items with their clientIDs and check ItemType properties
+				const ItemType& itemType = g_items.getItemType(item->getID());
+				Sprite* itemSprite = g_gui.gfx.getSprite(clientID);
+				GameSprite* itemGameSprite = dynamic_cast<GameSprite*>(itemSprite);
+				if (itemGameSprite) {
+					wxLogMessage("Item at map pos (%d,%d): clientID=%d, ID=%d, width=%d, height=%d, spriteList.size=%d", 
+						x, y, clientID, item->getID(), itemGameSprite->width, itemGameSprite->height, itemGameSprite->spriteList.size());
+					
+					// Special debug for cacti/stone area - check if this is part of a multi-tile object
+					if (clientID == 3698 || (clientID >= 3696 && clientID <= 3702)) {
+						wxLogMessage("  *** STONE/CACTI DETECTED: clientID=%d at (%d,%d)", clientID, x, y);
+					}
+				} else {
+					wxLogMessage("Item at map pos (%d,%d): clientID=%d, ID=%d (not GameSprite)", x, y, clientID, item->getID());
+				}
+				
 				if (clientID > 0 && spriteToTileID.find(clientID) != spriteToTileID.end()) {
-					objectLayers[layerIdx][index] = spriteToTileID[clientID];
+					int baseTileID = spriteToTileID[clientID];
+					
+					// Check if this is a multi-tile sprite
+					Sprite* sprite = g_gui.gfx.getSprite(clientID);
+					GameSprite* gameSprite = dynamic_cast<GameSprite*>(sprite);
+					uint8_t spriteWidth = 1;
+					uint8_t spriteHeight = 1;
+					
+					if (gameSprite) {
+						spriteWidth = gameSprite->width > 0 ? gameSprite->width : 1;
+						spriteHeight = gameSprite->height > 0 ? gameSprite->height : 1;
+					}
+					
+					// Place all pieces of the multi-tile sprite
+					// Tibia sprites: spriteList[0]=bottom-left, [1]=bottom-right, [2]=top-left, [3]=top-right
+					// Map layout: (x,y)=top-left, (x+1,y)=top-right, (x,y+1)=bottom-left, (x+1,y+1)=bottom-right
+					if (spriteWidth > 1 || spriteHeight > 1) {
+						wxLogMessage("Placing multi-tile item sprite: clientID=%d at map pos (%d,%d), baseTileID=%d, size=%dx%d, layer=%d", 
+							clientID, x, y, baseTileID, spriteWidth, spriteHeight, layerIdx);
+					}
+					
+					for (uint8_t h = 0; h < spriteHeight; ++h) {
+						for (uint8_t w = 0; w < spriteWidth; ++w) {
+							// Map position: Tibia uses bottom-to-top for h, right-to-left for w
+							// h=0 is bottom, h=1 is top -> flip vertically
+							// w=0 is right, w=1 is left -> flip horizontally
+							int tileX = x + (spriteWidth - 1 - w);
+							int tileY = y + (spriteHeight - 1 - h);
+							
+							if (spriteWidth > 1 || spriteHeight > 1) {
+								wxLogMessage("  Loop iteration: h=%d, w=%d, tileX=%d, tileY=%d, width=%d, height=%d", 
+									h, w, tileX, tileY, width, height);
+							}
+							
+							if (tileX >= 0 && tileX < width && tileY >= 0 && tileY < height) {
+								int targetIndex = tileY * width + tileX;
+								
+								// Get the piece index using the same method as spritesheet generation
+								// This ensures the tileID matches the spritesheet layout
+								int pieceIndex = gameSprite ? gameSprite->getIndex(w, h, 0, 0, 0, 0, 0) : (h * spriteWidth + w);
+								int pieceID = baseTileID + pieceIndex;
+								
+								if (spriteWidth > 1 || spriteHeight > 1) {
+									wxLogMessage("    PLACING: Piece [h=%d,w=%d] pieceIndex=%d -> tileID=%d at map pos (%d,%d)", 
+										h, w, pieceIndex, pieceID, tileX, tileY);
+								}
+								
+								objectLayers[layerIdx][targetIndex] = pieceID;
+							} else {
+								if (spriteWidth > 1 || spriteHeight > 1) {
+									wxLogMessage("    SKIPPED: Out of bounds (tileX=%d, tileY=%d)", tileX, tileY);
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -279,21 +459,27 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	tileset["firstgid"] = 1;
 	tileset["image"] = name + "_spritesheet.png";
 	
-	int rows = (usedSprites.size() + 9) / 10;
+	// Calculate total number of tiles (accounting for multi-tile sprites)
+	int totalTiles = 0;
+	for (const auto& spriteInfo : usedSprites) {
+		totalTiles += spriteInfo.width * spriteInfo.height;
+	}
+	
+	int rows = (totalTiles + 9) / 10;
 	tileset["imageheight"] = rows * 32;
 	tileset["imagewidth"] = 10 * 32;
 	tileset["margin"] = 0;
 	tileset["name"] = name;
 	tileset["spacing"] = 0;
-	tileset["tilecount"] = (int)usedSprites.size();
+	tileset["tilecount"] = totalTiles;
 	tileset["tileheight"] = 32;
 	tileset["tilewidth"] = 32;
 
 	// Add tile properties for collision
 	json tilesArray = json::array();
-	for (size_t i = 0; i < usedSprites.size(); ++i) {
+	for (int i = 0; i < totalTiles; ++i) {
 		json tileObj;
-		tileObj["id"] = (int)i;
+		tileObj["id"] = i;
 		
 		json properties = json::array();
 		json collisionProp;
@@ -337,12 +523,18 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 }
 
 bool IOMapJSON::generateSpritesheet(const std::string& directory, const std::string& name,
-	const std::unordered_map<uint16_t, int>& spriteMapping)
+	const std::vector<SpriteInfo>& sprites)
 {
 	const int TILE_SIZE = 32;
 	const int COLUMNS = 10;
-	int numSprites = (int)spriteMapping.size();
-	int rows = (numSprites + COLUMNS - 1) / COLUMNS; // Round up
+	
+	// Calculate total number of tile pieces needed
+	int totalTiles = 0;
+	for (const auto& spriteInfo : sprites) {
+		totalTiles += spriteInfo.width * spriteInfo.height;
+	}
+	
+	int rows = (totalTiles + COLUMNS - 1) / COLUMNS; // Round up
 
 	int imageWidth = COLUMNS * TILE_SIZE;
 	int imageHeight = rows * TILE_SIZE;
@@ -358,73 +550,161 @@ bool IOMapJSON::generateSpritesheet(const std::string& directory, const std::str
 	memset(rgb, 0, imageWidth * imageHeight * 3);
 	memset(alpha, 0, imageWidth * imageHeight);
 
-	// Sort sprites by their tile ID to maintain consistent ordering
-	std::vector<std::pair<uint16_t, int>> sortedSprites(spriteMapping.begin(), spriteMapping.end());
-	std::sort(sortedSprites.begin(), sortedSprites.end(),
-		[](const auto& a, const auto& b) { return a.second < b.second; });
+	int currentTileID = 0; // 0-based for positioning in spritesheet
 
-	// Draw each sprite
-	for (const auto& pair : sortedSprites) {
-		uint16_t clientID = pair.first;
-		int tileID = pair.second - 1; // Convert to 0-based for positioning
+	// Draw each sprite (and all its pieces if multi-tile)
+	for (const auto& spriteInfo : sprites) {
+		uint16_t clientID = spriteInfo.clientID;
+		uint8_t spriteWidth = spriteInfo.width;
+		uint8_t spriteHeight = spriteInfo.height;
 
-		int col = tileID % COLUMNS;
-		int row = tileID / COLUMNS;
+		wxLogMessage("Processing sprite clientID=%d at currentTileID=%d (1-based=%d)", clientID, currentTileID, currentTileID + 1);
 
 		// Get sprite from graphics manager
 		Sprite* sprite = g_gui.gfx.getSprite(clientID);
-		if (!sprite) continue;
+		if (!sprite) {
+			// Skip this sprite but still advance tile IDs
+			wxLogMessage("  Sprite not found, skipping %d tile IDs", spriteWidth * spriteHeight);
+			currentTileID += spriteWidth * spriteHeight;
+			continue;
+		}
 
-		// Create a temporary bitmap and DC to draw the sprite
-		wxBitmap tempBitmap(TILE_SIZE, TILE_SIZE, 32);
-		wxMemoryDC tempDC;
-		tempDC.SelectObject(tempBitmap);
+		// Check if this is a multi-tile sprite that needs special handling
+		GameSprite* gameSprite = dynamic_cast<GameSprite*>(sprite);
+		uint8_t actualWidth = 1;
+		uint8_t actualHeight = 1;
 		
-		// Clear with transparent background
-		tempDC.SetBackground(*wxTRANSPARENT_BRUSH);
-		tempDC.Clear();
+		if (gameSprite) {
+			actualWidth = gameSprite->width > 0 ? gameSprite->width : 1;
+			actualHeight = gameSprite->height > 0 ? gameSprite->height : 1;
+		}
 
-		// Draw sprite to temporary DC
-		sprite->DrawTo(&tempDC, SPRITE_SIZE_32x32, 0, 0);
-		
-		tempDC.SelectObject(wxNullBitmap);
-
-		// Convert to image
-		wxImage spriteImg = tempBitmap.ConvertToImage();
-		if (spriteImg.IsOk()) {
-			// Ensure sprite has alpha channel
-			if (!spriteImg.HasAlpha()) {
-				spriteImg.InitAlpha();
-			}
-
-			// Copy sprite data to main image
-			int destX = col * TILE_SIZE;
-			int destY = row * TILE_SIZE;
-
-			for (int y = 0; y < TILE_SIZE && y < spriteImg.GetHeight(); ++y) {
-				for (int x = 0; x < TILE_SIZE && x < spriteImg.GetWidth(); ++x) {
-					int destIdx = ((destY + y) * imageWidth + (destX + x));
-
-					if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
-						rgb[destIdx * 3] = spriteImg.GetRed(x, y);
-						rgb[destIdx * 3 + 1] = spriteImg.GetGreen(x, y);
-						rgb[destIdx * 3 + 2] = spriteImg.GetBlue(x, y);
+		// For multi-tile sprites (width>1 or height>1), extract each piece as a separate 32x32 tile
+		if (actualWidth > 1 || actualHeight > 1) {
+			wxLogMessage("Extracting multi-tile sprite: clientID=%d, width=%d, height=%d, creating %d separate tiles", 
+				spriteInfo.clientID, actualWidth, actualHeight, actualWidth * actualHeight);
+			
+			// Extract each 32x32 piece as a separate tile in the spritesheet
+			// Access the individual sprite pieces directly from spriteList
+			if (gameSprite && !gameSprite->spriteList.empty()) {
+				wxLogMessage("  Total pieces in spriteList: %d", gameSprite->spriteList.size());
+				
+				// Debug: Show what getIndex returns for each (w,h) combination
+				wxLogMessage("  getIndex mapping for this sprite:");
+				for (uint8_t h = 0; h < actualHeight; ++h) {
+					for (uint8_t w = 0; w < actualWidth; ++w) {
+						int idx = gameSprite->getIndex(w, h, 0, 0, 0, 0, 0);
+						wxLogMessage("    getIndex(w=%d, h=%d) = %d", w, h, idx);
+					}
+				}
+				
+				for (uint8_t h = 0; h < actualHeight; ++h) {
+					for (uint8_t w = 0; w < actualWidth; ++w) {
+						int col = currentTileID % COLUMNS;
+						int row = currentTileID / COLUMNS;
 						
-						if (spriteImg.HasAlpha()) {
-							alpha[destIdx] = spriteImg.GetAlpha(x, y);
-						} else {
-							// Check for magenta transparency (common in old sprites)
-							if (spriteImg.GetRed(x, y) == 255 &&
-								spriteImg.GetGreen(x, y) == 0 &&
-								spriteImg.GetBlue(x, y) == 255) {
-								alpha[destIdx] = 0;
+						// Get the index for this piece
+						int pieceIndex = gameSprite->getIndex(w, h, 0, 0, 0, 0, 0);
+						
+						wxLogMessage("  Spritesheet position: row=%d, col=%d (tileID=%d, 1-based=%d) will contain: spriteList[%d] (from h=%d,w=%d)", 
+							row, col, currentTileID, currentTileID + 1, pieceIndex, h, w);
+						
+						if (pieceIndex < gameSprite->spriteList.size()) {
+							uint8_t* pieceData = gameSprite->spriteList[pieceIndex]->getRGBData();
+							
+							if (pieceData) {
+								wxLogMessage("    Successfully extracted pieceData for spriteList[%d]", pieceIndex);
+								// Copy this 32x32 piece to the spritesheet
+								int destX = col * TILE_SIZE;
+								int destY = row * TILE_SIZE;
+								
+								for (int py = 0; py < TILE_SIZE; ++py) {
+									for (int px = 0; px < TILE_SIZE; ++px) {
+										int srcIdx = (py * TILE_SIZE + px) * 3;
+										int destIdx = ((destY + py) * imageWidth + (destX + px));
+										
+										if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
+											rgb[destIdx * 3] = pieceData[srcIdx];
+											rgb[destIdx * 3 + 1] = pieceData[srcIdx + 1];
+											rgb[destIdx * 3 + 2] = pieceData[srcIdx + 2];
+											
+											// Check for magenta (transparency)
+											if (pieceData[srcIdx] == 255 && pieceData[srcIdx + 1] == 0 && pieceData[srcIdx + 2] == 255) {
+												alpha[destIdx] = 0;
+											} else {
+												alpha[destIdx] = 255;
+											}
+										}
+									}
+								}
 							} else {
-								alpha[destIdx] = 255;
+								wxLogMessage("    ERROR: pieceData is NULL for spriteList[%d]!", pieceIndex);
+							}
+						} else {
+							wxLogMessage("    ERROR: pieceIndex=%d is out of bounds (spriteList.size=%d)!", pieceIndex, gameSprite->spriteList.size());
+						}
+						
+						currentTileID++;
+					}
+				}
+				wxLogMessage("  After processing multi-tile sprite, currentTileID=%d (1-based=%d)", currentTileID, currentTileID + 1);
+			} else {
+				// Fallback: skip these tile IDs
+				currentTileID += actualWidth * actualHeight;
+				wxLogMessage("  Multi-tile sprite has no spriteList, skipped to currentTileID=%d (1-based=%d)", currentTileID, currentTileID + 1);
+			}
+		} else {
+			// Single-tile sprite: extract normally at 32x32
+			int col = currentTileID % COLUMNS;
+			int row = currentTileID / COLUMNS;
+
+			wxBitmap tempBitmap(TILE_SIZE, TILE_SIZE, 32);
+			wxMemoryDC tempDC;
+			tempDC.SelectObject(tempBitmap);
+			
+			tempDC.SetBackground(*wxTRANSPARENT_BRUSH);
+			tempDC.Clear();
+
+			sprite->DrawTo(&tempDC, SPRITE_SIZE_32x32, 0, 0);
+			
+			tempDC.SelectObject(wxNullBitmap);
+
+			wxImage spriteImg = tempBitmap.ConvertToImage();
+			if (spriteImg.IsOk()) {
+				if (!spriteImg.HasAlpha()) {
+					spriteImg.InitAlpha();
+				}
+
+				int destX = col * TILE_SIZE;
+				int destY = row * TILE_SIZE;
+
+				for (int y = 0; y < TILE_SIZE && y < spriteImg.GetHeight(); ++y) {
+					for (int x = 0; x < TILE_SIZE && x < spriteImg.GetWidth(); ++x) {
+						int destIdx = ((destY + y) * imageWidth + (destX + x));
+
+						if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
+							rgb[destIdx * 3] = spriteImg.GetRed(x, y);
+							rgb[destIdx * 3 + 1] = spriteImg.GetGreen(x, y);
+							rgb[destIdx * 3 + 2] = spriteImg.GetBlue(x, y);
+							
+							if (spriteImg.HasAlpha()) {
+								alpha[destIdx] = spriteImg.GetAlpha(x, y);
+							} else {
+								if (spriteImg.GetRed(x, y) == 255 &&
+									spriteImg.GetGreen(x, y) == 0 &&
+									spriteImg.GetBlue(x, y) == 255) {
+									alpha[destIdx] = 0;
+								} else {
+									alpha[destIdx] = 255;
+								}
 							}
 						}
 					}
 				}
 			}
+			
+			currentTileID++;
+			wxLogMessage("  After processing single-tile sprite, currentTileID=%d (1-based=%d)", currentTileID, currentTileID + 1);
 		}
 	}
 

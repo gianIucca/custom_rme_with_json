@@ -23,6 +23,14 @@
 #include <wx/image.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
+
+// Store sprite info: clientID, width, height (in 32x32 tiles)
+struct SpriteInfo {
+	uint16_t clientID;
+	uint8_t width;  // in tiles (1 = 32px, 2 = 64px, etc.)
+	uint8_t height; // in tiles
+};
 
 class IOMapJSON
 {
@@ -38,7 +46,7 @@ public:
 private:
 	// Generate spritesheet PNG from used sprites
 	bool generateSpritesheet(const std::string& directory, const std::string& name,
-		const std::unordered_map<uint16_t, int>& spriteMapping);
+		const std::vector<SpriteInfo>& sprites);
 
 	// Get sprite data from game sprite
 	bool extractSpriteData(uint16_t clientID, uint8_t* buffer);
