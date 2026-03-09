@@ -616,33 +616,29 @@ bool IOMapJSON::generateSpritesheet(const std::string& directory, const std::str
 							row, col, currentTileID, currentTileID + 1, pieceIndex, h, w);
 						
 						if (pieceIndex < gameSprite->spriteList.size()) {
-							uint8_t* pieceData = gameSprite->spriteList[pieceIndex]->getRGBData();
+							// Use RGBA data so we get proper alpha (transparent = 0,0,0,0); RGB-only would show black backgrounds
+							uint8_t* pieceData = gameSprite->spriteList[pieceIndex]->getRGBAData();
 							
 							if (pieceData) {
 								wxLogMessage("    Successfully extracted pieceData for spriteList[%d]", pieceIndex);
-								// Copy this 32x32 piece to the spritesheet
+								// Copy this 32x32 piece to the spritesheet (RGBA: 4 bytes per pixel)
 								int destX = col * TILE_SIZE;
 								int destY = row * TILE_SIZE;
 								
 								for (int py = 0; py < TILE_SIZE; ++py) {
 									for (int px = 0; px < TILE_SIZE; ++px) {
-										int srcIdx = (py * TILE_SIZE + px) * 3;
+										int srcIdx = (py * TILE_SIZE + px) * 4;
 										int destIdx = ((destY + py) * imageWidth + (destX + px));
 										
 										if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
 											rgb[destIdx * 3] = pieceData[srcIdx];
 											rgb[destIdx * 3 + 1] = pieceData[srcIdx + 1];
 											rgb[destIdx * 3 + 2] = pieceData[srcIdx + 2];
-											
-											// Check for magenta (transparency)
-											if (pieceData[srcIdx] == 255 && pieceData[srcIdx + 1] == 0 && pieceData[srcIdx + 2] == 255) {
-												alpha[destIdx] = 0;
-											} else {
-												alpha[destIdx] = 255;
-											}
+											alpha[destIdx] = pieceData[srcIdx + 3];
 										}
 									}
 								}
+								delete[] pieceData;
 							} else {
 								wxLogMessage("    ERROR: pieceData is NULL for spriteList[%d]!", pieceIndex);
 							}
@@ -660,55 +656,69 @@ bool IOMapJSON::generateSpritesheet(const std::string& directory, const std::str
 				wxLogMessage("  Multi-tile sprite has no spriteList, skipped to currentTileID=%d (1-based=%d)", currentTileID, currentTileID + 1);
 			}
 		} else {
-			// Single-tile sprite: extract normally at 32x32
+			// Single-tile sprite: use engine RGBA when available (same as multi-tile) so background is transparent
+			// and black borders stay intact. Fall back to DrawTo only for non-GameSprite types.
 			int col = currentTileID % COLUMNS;
 			int row = currentTileID / COLUMNS;
+			int destX = col * TILE_SIZE;
+			int destY = row * TILE_SIZE;
+			bool filled = false;
 
-			wxBitmap tempBitmap(TILE_SIZE, TILE_SIZE, 32);
-			wxMemoryDC tempDC;
-			tempDC.SelectObject(tempBitmap);
-			
-			tempDC.SetBackground(*wxTRANSPARENT_BRUSH);
-			tempDC.Clear();
-
-			sprite->DrawTo(&tempDC, SPRITE_SIZE_32x32, 0, 0);
-			
-			tempDC.SelectObject(wxNullBitmap);
-
-			wxImage spriteImg = tempBitmap.ConvertToImage();
-			if (spriteImg.IsOk()) {
-				if (!spriteImg.HasAlpha()) {
-					spriteImg.InitAlpha();
+			if (gameSprite && !gameSprite->spriteList.empty()) {
+				uint8_t* pieceData = gameSprite->spriteList[0]->getRGBAData();
+				if (pieceData) {
+					for (int py = 0; py < TILE_SIZE; ++py) {
+						for (int px = 0; px < TILE_SIZE; ++px) {
+							int srcIdx = (py * TILE_SIZE + px) * 4;
+							int destIdx = ((destY + py) * imageWidth + (destX + px));
+							if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
+								rgb[destIdx * 3] = pieceData[srcIdx];
+								rgb[destIdx * 3 + 1] = pieceData[srcIdx + 1];
+								rgb[destIdx * 3 + 2] = pieceData[srcIdx + 2];
+								alpha[destIdx] = pieceData[srcIdx + 3];
+							}
+						}
+					}
+					delete[] pieceData;
+					filled = true;
 				}
+			}
 
-				int destX = col * TILE_SIZE;
-				int destY = row * TILE_SIZE;
+			if (!filled) {
+				wxBitmap tempBitmap(TILE_SIZE, TILE_SIZE, 32);
+				wxMemoryDC tempDC;
+				tempDC.SelectObject(tempBitmap);
+				tempDC.SetBackground(*wxTRANSPARENT_BRUSH);
+				tempDC.Clear();
+				sprite->DrawTo(&tempDC, SPRITE_SIZE_32x32, 0, 0);
+				tempDC.SelectObject(wxNullBitmap);
 
-				for (int y = 0; y < TILE_SIZE && y < spriteImg.GetHeight(); ++y) {
-					for (int x = 0; x < TILE_SIZE && x < spriteImg.GetWidth(); ++x) {
-						int destIdx = ((destY + y) * imageWidth + (destX + x));
-
-						if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
-							rgb[destIdx * 3] = spriteImg.GetRed(x, y);
-							rgb[destIdx * 3 + 1] = spriteImg.GetGreen(x, y);
-							rgb[destIdx * 3 + 2] = spriteImg.GetBlue(x, y);
-							
-							if (spriteImg.HasAlpha()) {
-								alpha[destIdx] = spriteImg.GetAlpha(x, y);
-							} else {
-								if (spriteImg.GetRed(x, y) == 255 &&
-									spriteImg.GetGreen(x, y) == 0 &&
-									spriteImg.GetBlue(x, y) == 255) {
-									alpha[destIdx] = 0;
+				wxImage spriteImg = tempBitmap.ConvertToImage();
+				if (spriteImg.IsOk()) {
+					if (!spriteImg.HasAlpha()) {
+						spriteImg.InitAlpha();
+					}
+					for (int y = 0; y < TILE_SIZE && y < spriteImg.GetHeight(); ++y) {
+						for (int x = 0; x < TILE_SIZE && x < spriteImg.GetWidth(); ++x) {
+							int destIdx = ((destY + y) * imageWidth + (destX + x));
+							if (destIdx * 3 + 2 < imageWidth * imageHeight * 3) {
+								rgb[destIdx * 3] = spriteImg.GetRed(x, y);
+								rgb[destIdx * 3 + 1] = spriteImg.GetGreen(x, y);
+								rgb[destIdx * 3 + 2] = spriteImg.GetBlue(x, y);
+								unsigned char r = spriteImg.GetRed(x, y);
+								unsigned char g = spriteImg.GetGreen(x, y);
+								unsigned char b = spriteImg.GetBlue(x, y);
+								if (spriteImg.HasAlpha()) {
+									alpha[destIdx] = (r == 255 && g == 0 && b == 255) ? 0 : spriteImg.GetAlpha(x, y);
 								} else {
-									alpha[destIdx] = 255;
+									alpha[destIdx] = (r == 255 && g == 0 && b == 255) ? 0 : 255;
 								}
 							}
 						}
 					}
 				}
 			}
-			
+
 			currentTileID++;
 			wxLogMessage("  After processing single-tile sprite, currentTileID=%d (1-based=%d)", currentTileID, currentTileID + 1);
 		}
