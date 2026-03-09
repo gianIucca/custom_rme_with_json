@@ -94,6 +94,8 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 	std::vector<SpriteInfo> usedSprites;
 	int nextTileID = 1; // Tiled uses 1-based indexing, 0 = empty
 
+	wxLogMessage("=== FIRST PASS: Assigning base tile IDs ===");
+
 	// First pass: collect all unique client IDs and check for multi-tile sprites
 	for (auto tile : tiles) {
 		if (!tile || !tile->hasItems()) continue;
@@ -121,10 +123,12 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 					wxLogMessage("Item sprite - clientID: %d (not a GameSprite)", clientID);
 				}
 				
+				wxLogMessage("  ASSIGNING: clientID=%d gets baseTileID=%d (before incrementing nextTileID)", clientID, nextTileID);
 				spriteToTileID[clientID] = nextTileID;
 				usedSprites.push_back({clientID, w, h});  // Store actual dimensions!
 				// Reserve tile IDs for multi-tile sprites (they take up w*h grid cells in spritesheet)
 				nextTileID += (w * h);
+				wxLogMessage("  After reserving %d tiles, nextTileID is now %d", w * h, nextTileID);
 			}
 		}
 
@@ -168,10 +172,12 @@ bool IOMapJSON::exportSelection(const std::string& directory, const std::string&
 					wxLogMessage("Ground sprite - clientID: %d (not a GameSprite)", clientID);
 				}
 				
+				wxLogMessage("  ASSIGNING: clientID=%d gets baseTileID=%d (before incrementing nextTileID)", clientID, nextTileID);
 				spriteToTileID[clientID] = nextTileID;
 				usedSprites.push_back({clientID, w, h});  // Store actual dimensions!
 				// Reserve tile IDs for multi-tile sprites (they take up w*h grid cells in spritesheet)
 				nextTileID += (w * h);
+				wxLogMessage("  After reserving %d tiles, nextTileID is now %d", w * h, nextTileID);
 			}
 				// Don't break - collect ALL items on this tile
 			}
